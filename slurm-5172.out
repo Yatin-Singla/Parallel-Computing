@@ -1,0 +1,12 @@
+my rank=0
+Rank=0: number of processes =2
+Debug: input size is = 32
+my rank=1
+Rank=1: number of processes =2
+Debug: input size is = 32
+my rank=0
+Rank=0: number of processes =2
+Debug: input size is = 32
+my rank=1
+Rank=1: number of processes =2
+Debug: input size is = 32
