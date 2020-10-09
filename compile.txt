@@ -1,0 +1,15 @@
+mpicc -o <outfile> <sourcefile>
+edit sub.sh src <to provide the right executable>
+sbatch -N <number of nodes> -n <number of processes> <submit script [sub.sh]>
+
+
+// monitor jobs
+squeue
+
+//keep monitoring -> while (1){squeue}
+watch squeue
+
+//cancel job
+scancel <jobID>
+
+
