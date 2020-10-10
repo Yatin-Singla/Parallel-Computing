@@ -2,12 +2,17 @@
 #include <stdlib.h>
 #include <mpi.h> 
 #include <assert.h>
+#include <sys/time.h>
 #include <time.h>
 #include <math.h>
 
 int N, G;
 int rank,p;
 time_t t;
+int root;
+
+// initalize outfiles
+FILE * statFile;
 
 // function declaration
 void printLocalBlock(int * array, int row, int col);
@@ -23,6 +28,12 @@ void ComputeGen(int ** lastGen, int * topRow, int * bottomRow, int ** newGen);
 int main(int argc,char *argv[]) {
    struct timeval t1,t2;
 
+   int * array = NULL;
+   statFile = fopen("statFile.csv", "a");
+   // time variables
+   double totalRuntime;
+   root = 0;
+   
    MPI_Init(&argc,&argv);
    MPI_Comm_rank(MPI_COMM_WORLD,&rank);
    MPI_Comm_size(MPI_COMM_WORLD,&p);
@@ -31,69 +42,31 @@ int main(int argc,char *argv[]) {
    printf("my rank=%d\n",rank);
    printf("Rank=%d: number of processes =%d\n",rank,p);
 
-   int * array = NULL;
-
    if (argc >= 2) {
       N = atoi(argv[1]);
       G = atoi(argv[2]);
       printf("Debug: Size of matrix = %d\n", N);
       printf("Debug: Generations = %d\n", G);
    }
+    
+   if (rank == root) {
+        fprintf(statFile, "N = %d, p = %d,  G = %d\n", N, p, G);
+   }
 
    // array is editable and has the original copy
    // of allocated memory nby generate initial game of life
    array = GenerateInitialGoL((int)N/p, N);
    printLocalBlock(array, (int)N/p, N);
-    
+
    Simulate(&array);
    
    free(array);
-/*
-    // time variable declaration
-    double tSend, tRecv;
-    // initalize outfiles
-    FILE * SendOutfile = fopen("blockSend.txt", "w");
-    FILE * RecvOutfile = fopen("blockRecv.txt", "w");
-    
-    int destRank = 0;
-    
-	MPI_Status status;
-    // loop sends data from 1Byte -> maxSize MB (multiply by 1024*1024)
-    // send size is a number but unit of data is sent in byte
-   for(int sendSize = 1; sendSize <= maxSize*1024*1024; sendSize *= 2){
- 
-           // process 1 is the sender
-            if(rank==1) {
-                //x = (char *) calloc (sendSize, sizeof(char));
-                gettimeofday(&t1,NULL);
-                for (int i = 0; i < loops; i++) {
-                    MPI_Send(x,sendSize,MPI_BYTE,destRank,0,MPI_COMM_WORLD);
-                }
-                gettimeofday(&t2,NULL);
-                tSend = (t2.tv_sec-t1.tv_sec)*1000000 + (t2.tv_usec-t1.tv_usec);
-                fprintf(SendOutfile,"Rank=%d: sent message size %d B; Send time %.2f microsec\n", rank,sendSize,(double)tSend/loops);
-                //free(x);
-                //x = NULL;
-            }
-            else if (rank==0) {
-                //y = (char *) calloc (sendSize,sizeof(char));
-                gettimeofday(&t1,NULL);
-                for(int i = 0; i < loops; i++) {
-                    MPI_Recv(y,sendSize,MPI_BYTE,MPI_ANY_SOURCE,MPI_ANY_TAG,MPI_COMM_WORLD,&status);
-                }
-                gettimeofday(&t2,NULL);
-                tRecv = (t2.tv_sec-t1.tv_sec)*1000000 + (t2.tv_usec-t1.tv_usec);      
-                fprintf(RecvOutfile,"Rank=%d: received message size %d B; Recv time %.2f microsec\n",rank,sendSize,(double)tRecv/loops);
-                //free(y);
-                //y = NULL;
-            }
 
-  }
-
-    fclose(SendOutfile);
-    fclose(RecvOutfile);
-    */
    MPI_Finalize();
+   if (rank == root) {
+        fprintf(statFile, "\n\n");
+   }
+   fclose(statFile);
    return 0;
 }
 
@@ -142,6 +115,7 @@ void printLocalBlock(int * array, int row, int col){
         printf("|\n");
     }
     printf("\n");
+    return;
 }
 
 void Simulate(int ** prevGenArr) {
@@ -150,38 +124,87 @@ void Simulate(int ** prevGenArr) {
     int * bottomRow = (int *) malloc(sizeof(int)*N);
     int prevRank = rank - 1, nextRank = rank + 1;
     MPI_Status statusTop, statusBottom;
+    struct timeval gt1, gt2, ct1, ct2, dt1, dt2;
+    double generationTime = 0.0, displayTime = 0.0, commTime = 0.0;
+    double maxCommTime;
+    int displayCounter = 0;
 
+    gettimeofday(&gt1,NULL);
     // simulation
-    for(int g=0; g < G; g++){
+    for(int g=0; g < G; g++, displayCounter++){
+        
+        gettimeofday(&ct1, NULL);    
         // ensures all processes are excuting
         // the same generation at any given time.
         MPI_Barrier(MPI_COMM_WORLD);
+        gettimeofday(&ct2, NULL);
+        commTime += (ct2.tv_sec-ct1.tv_sec)*1000000 + (ct2.tv_usec-ct1.tv_usec);
+            
 
         // send and recv
         if (rank == 0) {
             prevRank = p-1;
         }
-        else if (rank == (p-1)) {
+        if (rank == (p-1)) {
             nextRank = 0;
         }
 
+
+        gettimeofday(&ct1, NULL);
         // SEND AND RECEIVE ROWS
         // send top row to prevRank and recv bottom row from next rank
         MPI_Sendrecv(*prevGenArr, N, MPI_INT, prevRank, rank, bottomRow, N, MPI_INT, nextRank, MPI_ANY_TAG, MPI_COMM_WORLD, &statusBottom);
         // send bottom row to next rank and recv top row from prev rank
         MPI_Sendrecv(((*prevGenArr)+ (N*(((int)N/p)-1))), N, MPI_INT, prevRank, rank, topRow, N, MPI_INT, nextRank, MPI_ANY_TAG, MPI_COMM_WORLD, &statusBottom);
+
+        gettimeofday(&ct2, NULL);
+        commTime += (ct2.tv_sec-ct1.tv_sec)*1000000 + (ct2.tv_usec-ct1.tv_usec);
 //        printf("count recvd = %ld\n MPI_SOURCE = %d\n MPI_TAG = %d\n MPI_ERR=%d\n", statusTop._ucount, statusTop.MPI_SOURCE, statusTop.MPI_TAG, statusTop.MPI_ERROR);
+
       //  printf("print top row for rank %d\n", rank);
       //  printLocalBlock(topRow, 1, N);
       //  printf("print bottom row for rank %d\n", rank);
       //  printLocalBlock(bottomRow, 1, N);
 
         ComputeGen(prevGenArr, topRow, bottomRow, &nextGenArr);
-        // display new generation
+        if (displayCounter % 3 == 0) {
+            gettimeofday(&dt1, NULL);
+            // display new generation
+            if (rank == 0) {
+                printf("---------Displaying Gen %d----------\n\n", g+1);
+            }
+            DisplayGoL(*prevGenArr);
+            gettimeofday(&dt2, NULL);
+            displayTime += (dt2.tv_sec-dt1.tv_sec)*1000000 + (dt2.tv_usec-dt1.tv_usec);
+        }
     }
+
+    gettimeofday(&gt2,NULL);
+    generationTime = (gt2.tv_sec-gt1.tv_sec)*1000000 + (gt2.tv_usec-gt1.tv_usec);
+
+
+//    MPI_Reduce(&commTime, &maxCommTime, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    
+    if (rank == 0) { 
+        printf("generation time before = %lf\n", generationTime);
+        printf("comm time before = %lf\n", commTime);
+        printf("displaytime before = %lf\n", displayTime);
+  //      printf("comm time after = %lf\n", maxCommTime);
+    }
+    double avgRuntime = (generationTime - displayTime)/G;
+   if (rank == root) {
+         fprintf(statFile, "Runtime (Total Runtime - Display Time) = %lf us\n", generationTime - displayTime);
+         fprintf(statFile, "Average Runtime = %lf us\n", avgRuntime);  
+         fprintf(statFile, "Total Communication Time = %lf us\n", commTime);  
+         fprintf(statFile, "Average Communication Time = %lf us\n", commTime/G);  
+         fprintf(statFile, "Total Computation Time = %lf us\n", generationTime - displayTime - commTime);  
+         fprintf(statFile, "Average Computation Time = %lf us\n", avgRuntime - (commTime/G));  
+   }
+    // cleanup 
     free(topRow);
     free(bottomRow);
     free(nextGenArr);
+    return;
 }
 
 void DisplayGoL(int * blockArray){
@@ -298,6 +321,9 @@ void ComputeGen(int ** lastGen, int * topRow, int * bottomRow, int ** newGen) {
             else {
                 (*newGen)[i*N + j] = 0;
             }
+            if (N==p) {
+                i += 1;
+            }
         } 
     }  
 
@@ -395,7 +421,9 @@ void ComputeGen(int ** lastGen, int * topRow, int * bottomRow, int ** newGen) {
            else {
                (*newGen)[i*N + j] = 0;
            }
-        
+        }
+        if (N == p){
+             i += 1;
         }
     } 
     // copy newGen into lastGen
@@ -403,6 +431,5 @@ void ComputeGen(int ** lastGen, int * topRow, int * bottomRow, int ** newGen) {
         (*lastGen)[i] = (*newGen)[i];
     }
 
-    printLocalBlock(*lastGen, (int)N/p, N);
     return;
 }
