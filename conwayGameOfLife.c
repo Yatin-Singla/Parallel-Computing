@@ -15,10 +15,10 @@ int * GenerateInitialGoL(int row, int col);
 void print_matrix(int **m);
 // Need memory access to prev generation array 
 // to make changes to it
+// addditionally I want to pass by reference
 void Simulate(int ** prevGenArr);
 void DisplayGoL(int * blockArray);
-//void freeMatrix(int ** array, int row);
-//void printVectorMatrix(int *vector, int rows, int cols);
+void ComputeGen(int ** lastGen, int * topRow, int * bottomRow, int ** newGen);
 
 int main(int argc,char *argv[]) {
    struct timeval t1,t2;
@@ -45,20 +45,10 @@ int main(int argc,char *argv[]) {
    array = GenerateInitialGoL((int)N/p, N);
    printLocalBlock(array, (int)N/p, N);
     
-   DisplayGoL(array);
-   //Simulate(&array);
-   // int ** bigMatrix = GenerateInitialGoL(N,N);
-
-    //MPI_Gather(array, (N* ((int)N/p)), MPI_INT, bigMatrix, (N * ((int)N/p)), MPI_INT, 0, MPI_COMM_WORLD);
+   Simulate(&array);
    
-   //printLocalBlock(bigMatrix, N, N);
-   //free(array);
-   //free(bigMatrix);
+   free(array);
 /*
-    //initialize buffers
-    char *x = (char *) calloc (1024*1025*maxSize, sizeof(char));
-    char *y = (char *) calloc (1024*1025*maxSize, sizeof(char));
-
     // time variable declaration
     double tSend, tRecv;
     // initalize outfiles
@@ -110,6 +100,8 @@ int main(int argc,char *argv[]) {
 // initializes only a block of matrix
 // row == int N/p
 // col == N
+// can't generate a dynamically allocated 2D matrix
+// as it won't be contiguous in memory 
 int * GenerateInitialGoL(int row, int col){
     int i = 0, j = 0;
     // declare N/p rows
@@ -152,12 +144,11 @@ void printLocalBlock(int * array, int row, int col){
     printf("\n");
 }
 
-
 void Simulate(int ** prevGenArr) {
     int * nextGenArr = GenerateInitialGoL((int)N/p, N);
-    int * prevRow = (int *) malloc(sizeof(int)*N);
-    int * nextRow = (int *) malloc(sizeof(int)*N);
-    int prev = rank - 1, next = rank + 1;
+    int * topRow = (int *) malloc(sizeof(int)*N);
+    int * bottomRow = (int *) malloc(sizeof(int)*N);
+    int prevRank = rank - 1, nextRank = rank + 1;
     MPI_Status statusTop, statusBottom;
 
     // simulation
@@ -168,76 +159,31 @@ void Simulate(int ** prevGenArr) {
 
         // send and recv
         if (rank == 0) {
-            prev = p-1;
+            prevRank = p-1;
         }
         else if (rank == (p-1)) {
-            next = 0;
+            nextRank = 0;
         }
 
-        //if (rank==0) 
-          //  printf("prevGenArr last row 3 col= %d\n", (*prevGenArr)[((int)N/p)-1][3]);
-        // send top row
-        if (rank!=0) {
-            printLocalBlock(*prevGenArr, (int) N/p, N);
-            MPI_Send((*prevGenArr), N, MPI_INT, prev, rank, MPI_COMM_WORLD);
-        }
-        // send bottom row
-        //MPI_Send(&(prevGenArr[((int)N/p)-1]), N, MPI_INT, next, rank, MPI_COMM_WORLD);
+        // SEND AND RECEIVE ROWS
+        // send top row to prevRank and recv bottom row from next rank
+        MPI_Sendrecv(*prevGenArr, N, MPI_INT, prevRank, rank, bottomRow, N, MPI_INT, nextRank, MPI_ANY_TAG, MPI_COMM_WORLD, &statusBottom);
+        // send bottom row to next rank and recv top row from prev rank
+        MPI_Sendrecv(((*prevGenArr)+ (N*(((int)N/p)-1))), N, MPI_INT, prevRank, rank, topRow, N, MPI_INT, nextRank, MPI_ANY_TAG, MPI_COMM_WORLD, &statusBottom);
+//        printf("count recvd = %ld\n MPI_SOURCE = %d\n MPI_TAG = %d\n MPI_ERR=%d\n", statusTop._ucount, statusTop.MPI_SOURCE, statusTop.MPI_TAG, statusTop.MPI_ERROR);
+      //  printf("print top row for rank %d\n", rank);
+      //  printLocalBlock(topRow, 1, N);
+      //  printf("print bottom row for rank %d\n", rank);
+      //  printLocalBlock(bottomRow, 1, N);
 
-        // recv top row
-        if (rank==0) {
-            printf("print next row for process %d \n\n", rank);
-            for (int i = 0; i < N; i++)
-                    printf(" %d ", nextRow[i]);
-            *nextRow = 1;
-            *(nextRow +1) = 2;
-            MPI_Recv(nextRow, N, MPI_INT, prev, MPI_ANY_TAG, MPI_COMM_WORLD, &statusTop);
-            printf("count recvd = %ld\n MPI_SOURCE = %d\n MPI_TAG = %d\n MPI_ERR=%d\n", statusTop._ucount, statusTop.MPI_SOURCE, statusTop.MPI_TAG, statusTop.MPI_ERROR);
-            printf("next row after edit for process %d \n\n", rank);
-            for (int i = 0; i < N; i++)
-                    printf(" %d ", nextRow[i]);
-        }
-        // recv bottom row
-        //MPI_Recv(nextRow, N, MPI_INT, next, MPI_ANY_TAG, MPI_COMM_WORLD, &statusBottom);
-
-        
-        // simulate new generation
-       /* if (rank == 0) {
-            printf("rank 0 top Row \n\n|");
-            for(int i = 0; i < N; i++) {
-                printf(" %d ", prevRow[i]);
-            }
-            printf("|\n");
-            printf("rank 0 bottom Row \n\n|");
-            for(int i = 0; i < N; i++) {
-                printf(" %d ", nextRow[i]);
-            }
-            printf("|\n");
-        }
-*/
+        ComputeGen(prevGenArr, topRow, bottomRow, &nextGenArr);
         // display new generation
     }
-    free(prevRow);
-    free(nextRow);
+    free(topRow);
+    free(bottomRow);
     free(nextGenArr);
 }
-/*
-void printVectorMatrix(int *vector, int rows, int cols) {
-    printf("Rank = %d\n", rank);
-    printf("-------------------------VECTOR----------------------\n\n");
-    for(int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            if (j == 0) {
-                    printf("|");
-            }
-            printf(" %d ", vector[i*cols + j]); 
-        }
-        printf("|\n");
-    }
-    printf("\n\n");
-    return;
-}
-*/
+
 void DisplayGoL(int * blockArray){
     // generate nxn matrix to accumulate all the data in
     int * matrix;
@@ -257,13 +203,206 @@ void DisplayGoL(int * blockArray){
     return;
 }
 
-/*
-// deallocate 2D matrix
-void freeMatrix(int ** array, int row){
-    for (int i = 0; i < row; i++) {
-       free(array[i]); 
+void ComputeGen(int ** lastGen, int * topRow, int * bottomRow, int ** newGen) {
+    int aliveCount = 0;
+    // take care of middle portion of the block
+    
+    for (int i = 1; i < ((int)N/p)-1; i++){
+        for (int j = 1; j < N-1; j++) {
+            aliveCount = 8;
+            // North
+            aliveCount -= (((*lastGen)[(i-1)*N + j]) & 1);
+            // South
+            aliveCount -= (((*lastGen)[(i+1)*N + j]) & 1);
+            // East
+            aliveCount -= (((*lastGen)[i*N + j+1]) & 1);
+            // West
+            aliveCount -= (((*lastGen)[i*N + j-1]) & 1);
+            // North East
+            aliveCount -= (((*lastGen)[(i-1)*N + j+1]) & 1);
+            // North West
+            aliveCount -= (((*lastGen)[(i-1)*N + j-1]) & 1);
+            // South East
+            aliveCount -= (((*lastGen)[(i+1)*N + j+1]) & 1);
+            // South West
+            aliveCount -= (((*lastGen)[(i+1)*N + j-1]) & 1);
+            
+            // Fate of cell is decided
+            // cell dies of loneliness
+            if (aliveCount < 3) {
+                (*newGen)[i*N + j] = 1;
+            }
+            // cell dies of overcrowding
+            else if (aliveCount > 5) {
+                (*newGen)[i*N + j] = 1;
+            }
+            // cell is either brought back to life or stays alive
+            else {
+                (*newGen)[i*N + j] = 0;
+            }
+        }
     }
-    free(array);
+
+
+    // take care of edges
+
+    // top row and bottom row
+    for (int j = 1; j < N-1; j++) { 
+        for (int i = 0; i < ((int)N/p); i += ((int)N/p)-1) {
+            aliveCount = 8;
+            // top row
+            if (i -1 < 0){
+                // North
+                aliveCount -= topRow[j] & 1;
+                // South
+                aliveCount -= (((*lastGen)[(i+1)*N + j]) & 1);
+                // North East
+                aliveCount -= topRow[j+1] & 1;
+                // North West
+                aliveCount -= topRow[j-1] & 1;
+                // South East
+                aliveCount -= (((*lastGen)[(i+1)*N + j+1]) & 1);
+                // South West
+                aliveCount -= (((*lastGen)[(i+1)*N + j-1]) & 1);
+            }
+            else {
+                // North
+                aliveCount -= (((*lastGen)[(i-1)*N + j]) & 1);       
+                // South
+                aliveCount -= bottomRow[j] & 1;    
+                // North East
+                aliveCount -= (((*lastGen)[(i -1)*N + j+1]) & 1);
+                // North West
+                aliveCount -= (((*lastGen)[(i -1)*N + j-1]) & 1);
+                // South East
+                aliveCount -= bottomRow[j+1] & 1;
+                // South West
+                aliveCount -= bottomRow[j-1] & 1;
+            }
+            // East
+            aliveCount -= (((*lastGen)[i*N + j+1]) & 1);
+            // West
+            aliveCount -= (((*lastGen)[i*N + j-1]) & 1);
+        
+            // computation
+            // Fate of cell is decided
+            // cell dies of loneliness
+            if (aliveCount < 3) {
+                (*newGen)[i*N + j] = 1;
+            }
+            // cell dies of overcrowding
+            else if (aliveCount > 5) {
+                (*newGen)[i*N + j] = 1;
+            }
+            // cell is either brought back to life or stays alive
+            else {
+                (*newGen)[i*N + j] = 0;
+            }
+        } 
+    }  
+
+
+
+    // left edge and right edge
+    for (int i = 1; i < ((int)N/p)-1; i++) {
+        for (int j = 0; j < N; j+= N-1) {
+           aliveCount = 8;
+           // North
+           aliveCount -= (((*lastGen)[(i-1)*N + j]) & 1);
+           // South
+           aliveCount -= (((*lastGen)[(i+1)*N + j]) & 1);
+           // East 
+           aliveCount -= (((*lastGen)[i*N + ((N + j + 1) % N)]) & 1);
+           // West 
+           aliveCount -= (((*lastGen)[i*N + ((N + j - 1) % N)]) & 1);
+           // North East
+           aliveCount -= (((*lastGen)[(i-1)*N + ((N + j + 1) % N)]) & 1);
+           // North West
+           aliveCount -= (((*lastGen)[(i-1)*N + ((N + j - 1) % N)]) & 1);
+           // South East
+           aliveCount -= (((*lastGen)[(i+1)*N + ((N + j + 1) % N)]) & 1);
+           // South West
+           aliveCount -= (((*lastGen)[(i+1)*N + ((N + j - 1) % N)]) & 1);
+
+
+           // computation
+           // Fate of cell is decided
+           // cell dies of loneliness
+           if (aliveCount < 3) {
+               (*newGen)[i*N + j] = 1;
+           }
+           // cell dies of overcrowding
+           else if (aliveCount > 5) {
+               (*newGen)[i*N + j] = 1;
+           }
+           // cell is either brought back to life or stays alive
+           else {
+               (*newGen)[i*N + j] = 0;
+           }
+        }
+    }
+
+    // take care of corners
+    for (int i = 0; i < (int)N/p; i += ((int)N/p)-1) {
+        for (int j = 0; j < N; j += N-1) {
+            aliveCount = 8;
+            // top row
+            if (i == 0) {
+                // North
+                aliveCount -= (topRow[j] & 1);
+                // South
+                aliveCount -= (((*lastGen)[(i+1)*N + j]) & 1);
+                // North East
+                aliveCount -= (topRow[(N + j + 1) % N] & 1);
+                // North West
+                aliveCount -= (topRow[(N + j - 1) % N] & 1);
+                // South East
+                aliveCount -= (((*lastGen)[(i+1)*N + ((N + j + 1) % N)]) & 1);
+                // South West
+                aliveCount -= (((*lastGen)[(i+1)*N + ((N + j - 1) % N)]) & 1);
+            }
+            // bottom row
+            else {
+                // North
+                aliveCount -= (((*lastGen)[(i-1)*N + j]) & 1);
+                // South
+                aliveCount -= (bottomRow[j] & 1);
+                // North East
+                aliveCount -= (((*lastGen)[(i-1)*N + ((N + j + 1) % N)]) & 1);
+                // North West
+                aliveCount -= (((*lastGen)[(i+1)*N + ((N + j - 1) % N)]) & 1);
+                // South East
+                aliveCount -= (bottomRow[(N + j + 1) % N] & 1);
+                // South West
+                aliveCount -= (bottomRow[(N + j - 1) % N] & 1);
+            }
+           // East
+           aliveCount -= (((*lastGen)[i*N + ((N + j + 1) % N)]) & 1);
+           // West
+           aliveCount -= (((*lastGen)[i*N + ((N + j - 1) % N)]) & 1);
+        
+           // computation
+           // Fate of cell is decided
+           // cell dies of loneliness
+           if (aliveCount < 3) {
+               (*newGen)[i*N + j] = 1;
+           }
+           // cell dies of overcrowding
+           else if (aliveCount > 5) {
+               (*newGen)[i*N + j] = 1;
+           }
+           // cell is either brought back to life or stays alive
+           else {
+               (*newGen)[i*N + j] = 0;
+           }
+        
+        }
+    } 
+    // copy newGen into lastGen
+    for (int i = 0; i < N * ((int)N/p); i++) {
+        (*lastGen)[i] = (*newGen)[i];
+    }
+
+    printLocalBlock(*lastGen, (int)N/p, N);
     return;
 }
-*/
