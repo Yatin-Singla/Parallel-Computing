@@ -1,0 +1,4 @@
+*.swo
+*.swp
+a.out
+sum.c
