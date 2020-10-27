@@ -374,6 +374,9 @@ void pComparison(void) {
     */
 
     a = GenerateArray(n/p);
+
+    // making a dummy call to avoid reporting communication overhead in the results
+    MyAllReduce(a, n/p, MPI_SUM);
     
     gettimeofday(&myReduceStart, NULL);
     MyAllReduce(a, n/p, MPI_SUM);
